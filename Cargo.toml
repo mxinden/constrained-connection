@@ -1,0 +1,13 @@
+[package]
+name = "constrained-connection"
+version = "0.1.0"
+authors = ["Max Inden <mail@max-inden.de>"]
+edition = "2018"
+
+[dependencies]
+futures = "0.3"
+ringbuf = "0.2"
+futures-timer = "3"
+
+[dev-dependencies]
+quickcheck = "1"
