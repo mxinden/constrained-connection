@@ -1,9 +1,10 @@
+use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::future::FutureExt;
 use futures::ready;
+use futures::sink::SinkExt;
+use futures::stream::StreamExt;
 use futures::{AsyncRead, AsyncWrite};
 use futures_timer::Delay;
-use ringbuf::{Consumer, Producer, RingBuffer};
-use std::collections::VecDeque;
 use std::io::Result;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -11,30 +12,21 @@ use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
 pub struct Stream {
-    // TODO: Consider just using a vecdequeue
-    sender: Producer<u8>,
-    receiver: Consumer<u8>,
+    sender: UnboundedSender<Item>,
+
+    receiver: UnboundedReceiver<Item>,
+    next_item: Option<Item>,
 
     shared_send: Arc<Mutex<Shared>>,
     shared_receive: Arc<Mutex<Shared>>,
 
-    next_timer: Option<Timer>,
     delay: Duration,
+    capacity: usize,
 }
 
-impl Drop for Stream {
-    fn drop(&mut self) {
-        println!("drop called");
-        self.shared_receive.lock().unwrap().reader_dropped = true;
-        self.shared_send.lock().unwrap().writer_dropped = true;
-
-        if let Some(waker) = self.shared_send.lock().unwrap().waker_read.take() {
-            waker.wake();
-        }
-        if let Some(waker) = self.shared_receive.lock().unwrap().waker_write.take() {
-            waker.wake();
-        }
-    }
+struct Item {
+    data: Vec<u8>,
+    delay: Delay,
 }
 
 impl Unpin for Stream {}
@@ -43,135 +35,92 @@ impl AsyncRead for Stream {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        mut buf: &mut [u8],
+        buf: &mut [u8],
     ) -> Poll<Result<usize>> {
-        println!("called poll_read");
-        let timer = match self.next_timer.as_mut() {
-            Some(timer) => timer,
-            None => {
-                println!("no next timer");
-                let next = self.shared_receive.lock().unwrap().timers.pop_front();
-                match next {
-                    Some(timer) => {
-                        println!("timer in queue");
-                        self.next_timer = Some(timer);
-                        self.next_timer.as_mut().unwrap()
-                    }
-                    None => {
-                        println!("no timer in queue");
-                        if self.shared_receive.lock().unwrap().writer_dropped {
-                            // TODO: Is this the right behaviour?
-                            return Poll::Ready(Ok(0));
-                        } else {
-                            self.shared_receive.lock().unwrap().waker_read =
-                                Some(cx.waker().clone());
-                            return Poll::Pending;
-                        }
-                    }
+        let item = match self.next_item.as_mut() {
+            Some(item) => item,
+            None => match ready!(self.receiver.poll_next_unpin(cx)) {
+                Some(item) => {
+                    self.next_item = Some(item);
+                    self.next_item.as_mut().unwrap()
                 }
-            }
+                None => {
+                    return Poll::Ready(Ok(0));
+                }
+            },
         };
 
-        ready!(timer.delay.poll_unpin(cx));
+        ready!(item.delay.poll_unpin(cx));
 
-        let timer = self.next_timer.take().unwrap();
+        let n = std::cmp::min(buf.len(), item.data.len());
 
-        assert!(buf.len() > timer.num_bytes);
+        buf[0..n].copy_from_slice(&item.data[0..n]);
 
-        let bytes_read = self
-            .receiver
-            .write_into(&mut buf, Some(timer.num_bytes))
-            .unwrap();
-        assert_eq!(bytes_read, timer.num_bytes);
+        if n < item.data.len() {
+            item.data = item.data.split_off(n);
+        } else {
+            self.next_item.take().unwrap();
+        }
 
-        if let Some(waker) = self.shared_receive.lock().unwrap().waker_write.take() {
-            println!("woke writer");
+        let mut shared = self.shared_receive.lock().unwrap();
+        if let Some(waker) = shared.waker_write.take() {
             waker.wake();
         }
 
-        Poll::Ready(Ok(bytes_read))
+        debug_assert!(shared.size >= n);
+        shared.size -= n;
+
+        Poll::Ready(Ok(n))
     }
 }
 
 impl AsyncWrite for Stream {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<Result<usize>> {
-        println!("called poll_write");
-
-        if self.shared_send.lock().unwrap().reader_dropped {
-            return Poll::Ready(Ok(0));
+    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize>> {
+        let mut shared = self.shared_send.lock().unwrap();
+        let n = std::cmp::min(self.capacity - shared.size, buf.len());
+        if n == 0 {
+            shared.waker_write = Some(cx.waker().clone());
+            return Poll::Pending;
         }
 
-        let bytes_written = self.sender.push_slice(buf);
-        println!("bytes written {}", bytes_written);
-        if bytes_written > 0 {
-            self.shared_send.lock().unwrap().timers.push_back(Timer {
+        self.sender
+            .unbounded_send(Item {
+                data: buf[0..n].to_vec(),
                 delay: Delay::new(self.delay),
-                num_bytes: bytes_written,
-            });
+            })
+            .unwrap();
 
-            if let Some(waker) = self.shared_send.lock().unwrap().waker_read.take() {
-                println!("woke reader");
-                waker.wake();
-            }
+        shared.size += n;
 
-            Poll::Ready(Ok(bytes_written))
-        } else {
-            self.shared_send.lock().unwrap().waker_write = Some(cx.waker().clone());
-            println!("saving write waker to be woken up later");
-            Poll::Pending
-        }
+        Poll::Ready(Ok(n))
     }
 
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        if self.sender.is_empty() {
-            return Poll::Ready(Ok(()));
-        }
-
-        self.shared_send.lock().unwrap().waker_write = Some(cx.waker().clone());
-
-        Poll::Pending
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
+        ready!(self.sender.poll_flush_unpin(cx)).unwrap();
+        Poll::Ready(Ok(()))
     }
 
-    fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<()>> {
-        todo!()
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
+        ready!(self.sender.poll_close_unpin(cx)).unwrap();
+        Poll::Ready(Ok(()))
     }
 }
 
 #[derive(Default)]
 struct Shared {
-    // TODO: Could as well use a smallvec
-    timers: VecDeque<Timer>,
-
-    waker_read: Option<Waker>,
     waker_write: Option<Waker>,
-
-    reader_dropped: bool,
-    writer_dropped: bool,
-}
-
-struct Timer {
-    delay: Delay,
-    num_bytes: usize,
+    size: usize,
 }
 
 // TODO: Document whether delay is the delay for both directions or just a
 // single?
+/// `bandwidth` being the one way connection bandwidth in bit/s.
 pub fn new(bandwidth: u64, delay: Duration) -> (Stream, Stream) {
-    println!("called new with {}, {}", bandwidth, delay.as_millis());
-
-    let bandwidth_delay_product: u128 = bandwidth as u128 * delay.as_millis() / 1000u128;
+    let bandwidth_delay_product: u128 = bandwidth as u128 * delay.as_millis() / 1000u128 / 8;
     assert!(bandwidth_delay_product > 0);
 
-    let (a_to_b_sender, a_to_b_receiver) =
-        RingBuffer::<u8>::new(bandwidth_delay_product as usize).split();
-    let (b_to_a_sender, b_to_a_receiver) =
-        RingBuffer::<u8>::new(bandwidth_delay_product as usize).split();
-
-    println!("created ring buffers");
+    let (a_to_b_sender, a_to_b_receiver) = unbounded();
+    let (b_to_a_sender, b_to_a_receiver) = unbounded();
 
     let a_to_b_shared = Arc::new(Mutex::new(Default::default()));
     let b_to_a_shared = Arc::new(Mutex::new(Default::default()));
@@ -179,23 +128,27 @@ pub fn new(bandwidth: u64, delay: Duration) -> (Stream, Stream) {
     let a = Stream {
         sender: a_to_b_sender,
         receiver: b_to_a_receiver,
+        next_item: None,
 
         shared_send: a_to_b_shared.clone(),
         shared_receive: b_to_a_shared.clone(),
 
-        next_timer: None,
         delay,
+        // TODO: Remove hack and should this be devided in half?
+        capacity: bandwidth_delay_product as usize,
     };
 
     let b = Stream {
         sender: b_to_a_sender,
         receiver: a_to_b_receiver,
+        next_item: None,
 
-        shared_send: b_to_a_shared.clone(),
-        shared_receive: a_to_b_shared.clone(),
+        shared_send: b_to_a_shared,
+        shared_receive: a_to_b_shared,
 
-        next_timer: None,
         delay,
+        // TODO: Remove hack and should this be devided in half?
+        capacity: bandwidth_delay_product as usize,
     };
 
     (a, b)
@@ -207,10 +160,55 @@ mod tests {
     use futures::task::Spawn;
     use futures::{AsyncReadExt, AsyncWriteExt};
     use quickcheck::{Gen, QuickCheck, TestResult};
+    use std::time::Instant;
+
+    #[test]
+    fn timing() {
+        let bandwidth = 6 * 1024 * 1024;
+        let delay = Duration::from_millis(900);
+        let msg = vec![0;10 * 1024 * 1024];
+        let msg_clone = msg.clone();
+        let start = Instant::now();
+
+        let (mut a, mut b) = new(bandwidth, delay);
+
+        let mut pool = futures::executor::LocalPool::new();
+
+        pool.spawner()
+            .spawn_obj(
+                async move {
+                    a.write_all(&msg_clone).await.unwrap();
+                }
+                .boxed()
+                    .into(),
+            )
+            .unwrap();
+
+        pool.run_until(async {
+            let mut received_msg = Vec::new();
+            b.read_to_end(&mut received_msg).await.unwrap();
+
+            assert_eq!(msg, received_msg);
+        });
+
+        let duration = start.elapsed();
+
+        println!(
+            "bandwidth {} KiB/s, delay {}s duration {}s, msg len {} KiB, percentage {}",
+            bandwidth / 1024,
+            delay.as_secs_f64(),
+            duration.as_secs_f64(),
+            msg.len() / 1024 * 8,
+            (bandwidth as f64 * (duration.as_secs_f64() - delay.as_secs_f64())) / (msg.len() * 8) as f64
+
+        );
+    }
 
     #[test]
     fn quickcheck() {
-        fn prop(msg: Vec<u8>, bandwidth: u32, delay: u16) -> TestResult {
+        fn prop(msg: Vec<u8>, bandwidth: u32, delay: u64) -> TestResult {
+            let start = Instant::now();
+
             let bandwidth = bandwidth % 1024 * 1024 * 1024; // No more than 1 GiB.
             let delay = delay % 1_000; // No more than 1 sec.
 
@@ -218,16 +216,7 @@ mod tests {
                 return TestResult::discard();
             }
 
-            println!(
-                "msg len {}, bandwidth {}, delay {}",
-                msg.len(),
-                bandwidth,
-                delay
-            );
-
             let (mut a, mut b) = new(bandwidth as u64, Duration::from_millis(delay.into()));
-
-            println!("created a and b");
 
             let mut pool = futures::executor::LocalPool::new();
 
@@ -242,12 +231,24 @@ mod tests {
                 )
                 .unwrap();
 
-            pool.run_until(async move {
+            pool.run_until(async {
                 let mut received_msg = Vec::new();
                 b.read_to_end(&mut received_msg).await.unwrap();
 
                 assert_eq!(msg, received_msg);
             });
+
+            let duration = start.elapsed();
+
+            println!(
+                "bandwidth {} KiB/s, delay {}s duration {}s, msg len {} KiB, percentage {}",
+                bandwidth / 1024,
+                Duration::from_millis(delay).as_secs_f64(),
+                duration.as_secs_f64(),
+                msg.len() / 1024 * 8,
+                (bandwidth as f64 * (duration.as_secs_f64() - Duration::from_millis(delay).as_secs_f64())) / (msg.len() * 8) as f64
+
+            );
 
             TestResult::passed()
         }
