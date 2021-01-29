@@ -3,6 +3,8 @@ name = "constrained-connection"
 version = "0.1.0"
 authors = ["Max Inden <mail@max-inden.de>"]
 edition = "2018"
+license = "Apache-2.0 OR MIT"
+description = "Simulate constrained network connections."
 
 [dependencies]
 futures = "0.3"

@@ -34,6 +34,23 @@
 //!     bandwidth / 1024, rtt.as_secs_f64(), msg.len() / 1024, duration.as_secs_f64(),
 //! );
 //! ```
+//!
+//! For now, as the library is not properly optimized, you can not simulate high
+//! speed networks. Execute the `examples/accuracy.rs` binary for details.
+//!
+//! ```bash
+//! $ cargo run --example accuracy --release
+//!
+//! Name                            Bandwidth       RTT             Payload         Duration        Acurracy
+//! Satellite Network               500 KiB/s       0.90000 s       10240 KiB       164.49 s        1.00 %
+//! Residential DSL                 1953 KiB/s      0.05000 s       10240 KiB       42.97 s         1.02 %
+//! Mobile HSDPA                    5859 KiB/s      0.10000 s       10240 KiB       14.19 s         1.01 %
+//! Residential ADSL2+              19531 KiB/s     0.05000 s       10240 KiB       4.33 s          1.03 %
+//! Residential Cable Internet      195312 KiB/s    0.02000 s       10240 KiB       0.46 s          1.07 %
+//! GBit LAN                        976562 KiB/s    0.00010 s       10240 KiB       0.26 s          3.16 %
+//! High Speed Terrestiral Net      976562 KiB/s    0.00100 s       10240 KiB       0.13 s          1.56 %
+//! Ultra High Speed LAN            97656250 KiB/s  0.00003 s       10240 KiB       0.01 s          16.08 %
+//! ```
 
 use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::future::FutureExt;
