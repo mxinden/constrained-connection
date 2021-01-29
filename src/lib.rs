@@ -164,6 +164,116 @@ fn single_direction_capacity_bytes(bandwidth_bits_per_second: u64, rtt: Duration
     (bandwidth_delay_product / 2) as usize
 }
 
+/// Samples based on numbers from
+/// https://en.wikipedia.org/wiki/Bandwidth-delay_product#examples
+pub mod samples {
+    use super::Connection;
+    use std::time::Duration;
+
+    pub fn satellite_network() -> (u64, Duration, (Connection, Connection)) {
+        let bandwidth = 512_000;
+        let rtt = Duration::from_millis(900);
+        let connections = Connection::new(bandwidth, rtt);
+
+        (bandwidth, rtt, connections)
+    }
+
+    pub fn residential_dsl() -> (u64, Duration, (Connection, Connection)) {
+        let bandwidth = 2_000_000;
+        let rtt = Duration::from_millis(50);
+        let connections = Connection::new(bandwidth, rtt);
+
+        (bandwidth, rtt, connections)
+    }
+
+    pub fn mobile_hsdpa() -> (u64, Duration, (Connection, Connection)) {
+        let bandwidth = 6_000_000;
+        let rtt = Duration::from_millis(100);
+        let connections = Connection::new(bandwidth, rtt);
+
+        (bandwidth, rtt, connections)
+    }
+
+    pub fn residential_adsl2() -> (u64, Duration, (Connection, Connection)) {
+        let bandwidth = 20_000_000;
+        let rtt = Duration::from_millis(50);
+        let connections = Connection::new(bandwidth, rtt);
+
+        (bandwidth, rtt, connections)
+    }
+
+    pub fn residential_cable_internet() -> (u64, Duration, (Connection, Connection)) {
+        let bandwidth = 200_000_000;
+        let rtt = Duration::from_millis(20);
+        let connections = Connection::new(bandwidth, rtt);
+
+        (bandwidth, rtt, connections)
+    }
+
+    pub fn gbit_lan() -> (u64, Duration, (Connection, Connection)) {
+        let bandwidth = 1_000_000_000;
+        let rtt = Duration::from_micros(100);
+        let connections = Connection::new(bandwidth, rtt);
+
+        (bandwidth, rtt, connections)
+    }
+
+    pub fn high_speed_terrestiral_network() -> (u64, Duration, (Connection, Connection)) {
+        let bandwidth = 1_000_000_000;
+        let rtt = Duration::from_millis(1);
+        let connections = Connection::new(bandwidth, rtt);
+
+        (bandwidth, rtt, connections)
+    }
+
+    pub fn ultra_high_speed_lan() -> (u64, Duration, (Connection, Connection)) {
+        let bandwidth = 100_000_000_000;
+        let rtt = Duration::from_micros(30);
+        let connections = Connection::new(bandwidth, rtt);
+
+        (bandwidth, rtt, connections)
+    }
+
+    pub fn iter_all(
+    ) -> impl Iterator<Item = (String, fn() -> (u64, Duration, (Connection, Connection)))> {
+        vec![
+            (
+                "Satellite Network         ".to_string(),
+                satellite_network as fn() -> (u64, Duration, (Connection, Connection)),
+            ),
+            (
+                "Residential DSL           ".to_string(),
+                residential_dsl as fn() -> (u64, Duration, (Connection, Connection)),
+            ),
+            (
+                "Mobile HSDPA              ".to_string(),
+                mobile_hsdpa as fn() -> (u64, Duration, (Connection, Connection)),
+            ),
+            (
+                "Residential ADSL2+        ".to_string(),
+                residential_adsl2 as fn() -> (u64, Duration, (Connection, Connection)),
+            ),
+            (
+                "Residential Cable Internet".to_string(),
+                residential_cable_internet as fn() -> (u64, Duration, (Connection, Connection)),
+            ),
+            (
+                "GBit LAN                 ".to_string(),
+                residential_cable_internet as fn() -> (u64, Duration, (Connection, Connection)),
+            ),
+            (
+                "High Speed Terrestiral Net".to_string(),
+                high_speed_terrestiral_network as fn() -> (u64, Duration, (Connection, Connection)),
+            ),
+            (
+                "Ultra High Speed LAN     ".to_string(),
+                ultra_high_speed_lan as fn() -> (u64, Duration, (Connection, Connection)),
+            ),
+        ]
+        .into_iter()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,49 +281,6 @@ mod tests {
     use futures::{AsyncReadExt, AsyncWriteExt};
     use quickcheck::{Gen, QuickCheck, TestResult};
     use std::time::Instant;
-
-    #[ignore]
-    #[test]
-    fn timing() {
-        let bandwidth = 6 * 1024 * 1024;
-        let delay = Duration::from_millis(900);
-        let msg = vec![0; 10 * 1024 * 1024];
-        let msg_clone = msg.clone();
-        let start = Instant::now();
-
-        let (mut a, mut b) = Connection::new(bandwidth, delay);
-
-        let mut pool = futures::executor::LocalPool::new();
-
-        pool.spawner()
-            .spawn_obj(
-                async move {
-                    a.write_all(&msg_clone).await.unwrap();
-                }
-                .boxed()
-                .into(),
-            )
-            .unwrap();
-
-        pool.run_until(async {
-            let mut received_msg = Vec::new();
-            b.read_to_end(&mut received_msg).await.unwrap();
-
-            assert_eq!(msg, received_msg);
-        });
-
-        let duration = start.elapsed();
-
-        println!(
-            "bandwidth {} KiB/s, delay {}s duration {}s, msg len {} KiB, percentage {}",
-            bandwidth / 1024,
-            delay.as_secs_f64(),
-            duration.as_secs_f64(),
-            msg.len() / 1024 * 8,
-            (bandwidth as f64 * (duration.as_secs_f64() - delay.as_secs_f64()))
-                / (msg.len() * 8) as f64
-        );
-    }
 
     #[test]
     fn quickcheck() {
