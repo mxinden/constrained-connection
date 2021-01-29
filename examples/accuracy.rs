@@ -16,7 +16,7 @@ fn main() {
 fn run_sample(name: &str, f: fn() -> (u64, Duration, (Connection, Connection))) {
     let (bandwidth, rtt, (mut a, mut b)) = f();
 
-    let msg = vec![0; 1 * 1024 * 1024];
+    let msg = vec![0; 10 * 1024 * 1024];
     let msg_clone = msg.clone();
 
     let start = Instant::now();
@@ -47,7 +47,7 @@ fn run_sample(name: &str, f: fn() -> (u64, Duration, (Connection, Connection))) 
         name,
         bandwidth / 1024,
         rtt.as_secs_f64(),
-        msg.len() / 1024 * 8,
+        msg.len() / 1024,
         duration.as_secs_f64(),
         (bandwidth as f64 * (duration.as_secs_f64() - rtt.as_secs_f64() / 2.0))
             / (msg.len() * 8) as f64

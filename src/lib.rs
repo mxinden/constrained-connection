@@ -1,3 +1,40 @@
+//! Simulate constrained network connections.
+//!
+//! ```
+//! # use constrained_connection::Connection;
+//! # use futures::task::Spawn;
+//! # use futures::{AsyncReadExt, AsyncWriteExt};
+//! # use std::time::Duration;
+//! # use std::time::Instant;
+//! # use futures::future::FutureExt;
+//! let msg = vec![0; 10 * 1024 * 1024];
+//! let msg_clone = msg.clone();
+//! let start = Instant::now();
+//! let mut pool = futures::executor::LocalPool::new();
+//!
+//! let bandwidth = 1_000_000_000;
+//! let rtt = Duration::from_micros(100);
+//! let (mut a, mut b) = Connection::new(bandwidth, rtt);
+//!
+//! pool.spawner().spawn_obj(async move {
+//!     a.write_all(&msg_clone).await.unwrap();
+//! }.boxed().into()).unwrap();
+//!
+//! pool.run_until(async {
+//!     let mut received_msg = Vec::new();
+//!     b.read_to_end(&mut received_msg).await.unwrap();
+//!
+//!     assert_eq!(msg, received_msg);
+//! });
+//!
+//! let duration = start.elapsed();
+//!
+//! println!(
+//!     "Bandwidth {} KiB/s, RTT {:.5} s, Payload length {} KiB, duration {:.5} s",
+//!     bandwidth / 1024, rtt.as_secs_f64(), msg.len() / 1024, duration.as_secs_f64(),
+//! );
+//! ```
+
 use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::future::FutureExt;
 use futures::ready;
@@ -259,7 +296,7 @@ pub mod samples {
             ),
             (
                 "GBit LAN                 ".to_string(),
-                residential_cable_internet as fn() -> (u64, Duration, (Connection, Connection)),
+                gbit_lan as fn() -> (u64, Duration, (Connection, Connection)),
             ),
             (
                 "High Speed Terrestiral Net".to_string(),
