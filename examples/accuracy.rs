@@ -1,9 +1,9 @@
-use constrained_connection::Connection;
+use constrained_connection::Endpoint;
+use futures::future::FutureExt;
 use futures::task::Spawn;
 use futures::{AsyncReadExt, AsyncWriteExt};
 use std::time::Duration;
 use std::time::Instant;
-use futures::future::FutureExt;
 
 fn main() {
     println!("Name\t\t\t\tBandwidth\tRTT\t\tPayload\t\tDuration\tAcurracy");
@@ -13,7 +13,7 @@ fn main() {
     }
 }
 
-fn run_sample(name: &str, f: fn() -> (u64, Duration, (Connection, Connection))) {
+fn run_sample(name: &str, f: fn() -> (u64, Duration, (Endpoint, Endpoint))) {
     let (bandwidth, rtt, (mut a, mut b)) = f();
 
     let msg = vec![0; 10 * 1024 * 1024];
