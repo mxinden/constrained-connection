@@ -1,5 +1,12 @@
 //! Simulate constrained network connections.
 //!
+//! Can be used to benchmark networking logic build on top of a stream oriented
+//! connection (e.g. TCP). Create a connection by specifying its bandwidth as
+//! well as its round trip time (delay). The connection will delay each bytes
+//! chunk by the configured delay and allow at most [bandwidth-delay
+//! product](https://en.wikipedia.org/wiki/Bandwidth-delay_product) number of
+//! bytes on the *wire* enforcing backpressure.
+//!
 //! ```
 //! # use constrained_connection::Endpoint;
 //! # use futures::task::Spawn;

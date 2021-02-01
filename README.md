@@ -2,6 +2,13 @@
 
 Simulate constrained network connections.
 
+Can be used to benchmark networking logic build on top of a stream oriented
+connection (e.g. TCP). Create a connection by specifying its bandwidth as
+well as its round trip time (delay). The connection will delay each bytes
+chunk by the configured delay and allow at most [bandwidth-delay
+product](https://en.wikipedia.org/wiki/Bandwidth-delay_product) number of
+bytes on the *wire* enforcing backpressure.
+
 ```rust
 let msg = vec![0; 10 * 1024 * 1024];
 let msg_clone = msg.clone();
@@ -10,7 +17,7 @@ let mut pool = futures::executor::LocalPool::new();
 
 let bandwidth = 1_000_000_000;
 let rtt = Duration::from_micros(100);
-let (mut a, mut b) = Connection::new(bandwidth, rtt);
+let (mut a, mut b) = Connection::new_constrained(bandwidth, rtt);
 
 pool.spawner().spawn_obj(async move {
     a.write_all(&msg_clone).await.unwrap();
