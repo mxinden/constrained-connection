@@ -8,7 +8,7 @@
 //! bytes on the *wire* enforcing backpressure.
 //!
 //! ```
-//! # use constrained_connection::Endpoint;
+//! # use constrained_connection::{Endpoint, new_constrained_connection};
 //! # use futures::task::Spawn;
 //! # use futures::{AsyncReadExt, AsyncWriteExt};
 //! # use std::time::Duration;
@@ -21,7 +21,7 @@
 //!
 //! let bandwidth = 1_000_000_000;
 //! let rtt = Duration::from_micros(100);
-//! let (mut a, mut b) = Connection::new_constrained(bandwidth, rtt);
+//! let (mut a, mut b) = new_constrained_connection(bandwidth, rtt);
 //!
 //! pool.spawner().spawn_obj(async move {
 //!     a.write_all(&msg_clone).await.unwrap();
