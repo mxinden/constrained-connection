@@ -66,7 +66,7 @@ use futures::sink::SinkExt;
 use futures::stream::StreamExt;
 use futures::{AsyncRead, AsyncWrite};
 use futures_timer::Delay;
-use std::io::Result;
+use std::io::{Error, ErrorKind, Result};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
@@ -230,7 +230,7 @@ impl AsyncWrite for Endpoint {
                 data: buf[0..n].to_vec(),
                 delay: Delay::new(self.delay),
             })
-            .unwrap();
+            .map_err(|e| Error::new(ErrorKind::ConnectionAborted, e))?;
 
         shared.size += n;
 
