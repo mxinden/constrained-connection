@@ -14,7 +14,7 @@
 //!
 //! let bandwidth = 1_000_000_000;
 //! let rtt = Duration::from_micros(100);
-//! let (mut a, mut b) = Connection::new(bandwidth, rtt);
+//! let (mut a, mut b) = Connection::new_constrained(bandwidth, rtt);
 //!
 //! pool.spawner().spawn_obj(async move {
 //!     a.write_all(&msg_clone).await.unwrap();
@@ -65,6 +65,7 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
+// TODO: Consider renaming to `Endpoint`.
 pub struct Connection {
     sender: UnboundedSender<Item>,
 
@@ -84,7 +85,8 @@ impl Connection {
     /// `bandwidth` being the bandwidth in bits per second.
     ///
     /// `rtt` being the round trip time.
-    pub fn new(bandwidth_bits_per_second: u64, rtt: Duration) -> (Connection, Connection) {
+    // TODO: Consider renaming to `new_connection`.
+    pub fn new_constrained(bandwidth_bits_per_second: u64, rtt: Duration) -> (Connection, Connection) {
         let single_direction_capacity_bytes =
             single_direction_capacity_bytes(bandwidth_bits_per_second, rtt);
         assert!(single_direction_capacity_bytes > 0);
@@ -118,6 +120,40 @@ impl Connection {
 
             delay: single_direction_delay,
             capacity: single_direction_capacity_bytes,
+        };
+
+        (a, b)
+    }
+
+    pub fn new_unconstrained() -> (Connection, Connection) {
+        let (a_to_b_sender, a_to_b_receiver) = unbounded();
+        let (b_to_a_sender, b_to_a_receiver) = unbounded();
+
+        let a_to_b_shared = Arc::new(Mutex::new(Default::default()));
+        let b_to_a_shared = Arc::new(Mutex::new(Default::default()));
+
+        let a = Connection {
+            sender: a_to_b_sender,
+            receiver: b_to_a_receiver,
+            next_item: None,
+
+            shared_send: a_to_b_shared.clone(),
+            shared_receive: b_to_a_shared.clone(),
+
+            delay: Duration::from_secs(0),
+            capacity: std::usize::MAX,
+        };
+
+        let b = Connection {
+            sender: b_to_a_sender,
+            receiver: a_to_b_receiver,
+            next_item: None,
+
+            shared_send: b_to_a_shared,
+            shared_receive: a_to_b_shared,
+
+            delay: Duration::from_secs(0),
+            capacity: std::usize::MAX,
         };
 
         (a, b)
@@ -227,7 +263,7 @@ pub mod samples {
     pub fn satellite_network() -> (u64, Duration, (Connection, Connection)) {
         let bandwidth = 512_000;
         let rtt = Duration::from_millis(900);
-        let connections = Connection::new(bandwidth, rtt);
+        let connections = Connection::new_constrained(bandwidth, rtt);
 
         (bandwidth, rtt, connections)
     }
@@ -235,7 +271,7 @@ pub mod samples {
     pub fn residential_dsl() -> (u64, Duration, (Connection, Connection)) {
         let bandwidth = 2_000_000;
         let rtt = Duration::from_millis(50);
-        let connections = Connection::new(bandwidth, rtt);
+        let connections = Connection::new_constrained(bandwidth, rtt);
 
         (bandwidth, rtt, connections)
     }
@@ -243,7 +279,7 @@ pub mod samples {
     pub fn mobile_hsdpa() -> (u64, Duration, (Connection, Connection)) {
         let bandwidth = 6_000_000;
         let rtt = Duration::from_millis(100);
-        let connections = Connection::new(bandwidth, rtt);
+        let connections = Connection::new_constrained(bandwidth, rtt);
 
         (bandwidth, rtt, connections)
     }
@@ -251,7 +287,7 @@ pub mod samples {
     pub fn residential_adsl2() -> (u64, Duration, (Connection, Connection)) {
         let bandwidth = 20_000_000;
         let rtt = Duration::from_millis(50);
-        let connections = Connection::new(bandwidth, rtt);
+        let connections = Connection::new_constrained(bandwidth, rtt);
 
         (bandwidth, rtt, connections)
     }
@@ -259,7 +295,7 @@ pub mod samples {
     pub fn residential_cable_internet() -> (u64, Duration, (Connection, Connection)) {
         let bandwidth = 200_000_000;
         let rtt = Duration::from_millis(20);
-        let connections = Connection::new(bandwidth, rtt);
+        let connections = Connection::new_constrained(bandwidth, rtt);
 
         (bandwidth, rtt, connections)
     }
@@ -267,7 +303,7 @@ pub mod samples {
     pub fn gbit_lan() -> (u64, Duration, (Connection, Connection)) {
         let bandwidth = 1_000_000_000;
         let rtt = Duration::from_micros(100);
-        let connections = Connection::new(bandwidth, rtt);
+        let connections = Connection::new_constrained(bandwidth, rtt);
 
         (bandwidth, rtt, connections)
     }
@@ -275,7 +311,7 @@ pub mod samples {
     pub fn high_speed_terrestiral_network() -> (u64, Duration, (Connection, Connection)) {
         let bandwidth = 1_000_000_000;
         let rtt = Duration::from_millis(1);
-        let connections = Connection::new(bandwidth, rtt);
+        let connections = Connection::new_constrained(bandwidth, rtt);
 
         (bandwidth, rtt, connections)
     }
@@ -283,7 +319,7 @@ pub mod samples {
     pub fn ultra_high_speed_lan() -> (u64, Duration, (Connection, Connection)) {
         let bandwidth = 100_000_000_000;
         let rtt = Duration::from_micros(30);
-        let connections = Connection::new(bandwidth, rtt);
+        let connections = Connection::new_constrained(bandwidth, rtt);
 
         (bandwidth, rtt, connections)
     }
@@ -352,7 +388,7 @@ mod tests {
                 return TestResult::discard();
             }
 
-            let (mut a, mut b) = Connection::new(bandwidth as u64, rtt);
+            let (mut a, mut b) = Connection::new_constrained(bandwidth as u64, rtt);
 
             let mut pool = futures::executor::LocalPool::new();
 
