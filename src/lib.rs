@@ -49,14 +49,15 @@
 //! $ cargo run --example accuracy --release
 //!
 //! Name                            Bandwidth       RTT             Payload         Duration        Acurracy
-//! Satellite Network               500 KiB/s       0.90000 s       10240 KiB       164.49 s        1.00 %
-//! Residential DSL                 1953 KiB/s      0.05000 s       10240 KiB       42.97 s         1.02 %
-//! Mobile HSDPA                    5859 KiB/s      0.10000 s       10240 KiB       14.19 s         1.01 %
-//! Residential ADSL2+              19531 KiB/s     0.05000 s       10240 KiB       4.33 s          1.03 %
-//! Residential Cable Internet      195312 KiB/s    0.02000 s       10240 KiB       0.46 s          1.07 %
-//! GBit LAN                        976562 KiB/s    0.00010 s       10240 KiB       0.26 s          3.16 %
-//! High Speed Terrestiral Net      976562 KiB/s    0.00100 s       10240 KiB       0.13 s          1.56 %
-//! Ultra High Speed LAN            97656250 KiB/s  0.00003 s       10240 KiB       0.01 s          16.08 %
+//! Satellite Network               500 KiB/s       0.90000 s       10240 KiB       164.46 s        1.00 %
+//! Residential DSL                 1953 KiB/s      0.05000 s       10240 KiB       42.78 s         1.02 %
+//! Mobile HSDPA                    5859 KiB/s      0.10000 s       10240 KiB       14.17 s         1.01 %
+//! Residential ADSL2+              19531 KiB/s     0.05000 s       10240 KiB       4.29 s          1.02 %
+//! Residential Cable Internet      195312 KiB/s    0.02000 s       10240 KiB       0.46 s          1.08 %
+//! GBit LAN                        976562 KiB/s    0.00010 s       10240 KiB       0.28 s          3.34 %
+//! High Speed Terrestiral Net      976562 KiB/s    0.00100 s       10240 KiB       0.14 s          1.63 %
+//! Ultra High Speed LAN            97656250 KiB/s  0.00003 s       10240 KiB       0.02 s          18.87 %
+//! Unconstrained                   18014398509481983 KiB/s 0.00000 s       10240 KiB       0.03 s          6378832541.51 %
 //! ```
 
 use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
@@ -263,7 +264,7 @@ fn single_direction_capacity_bytes(bandwidth_bits_per_second: u64, rtt: Duration
 /// Samples based on numbers from
 /// https://en.wikipedia.org/wiki/Bandwidth-delay_product#examples
 pub mod samples {
-    use super::{new_constrained_connection, Endpoint};
+    use super::{new_constrained_connection, new_unconstrained_connection, Endpoint};
     use std::time::Duration;
 
     pub fn satellite_network() -> (u64, Duration, (Endpoint, Endpoint)) {
@@ -330,6 +331,14 @@ pub mod samples {
         (bandwidth, rtt, connections)
     }
 
+    pub fn unconstrained() -> (u64, Duration, (Endpoint, Endpoint)) {
+        let bandwidth = std::u64::MAX;
+        let rtt = Duration::from_micros(0);
+        let connections = new_unconstrained_connection();
+
+        (bandwidth, rtt, connections)
+    }
+
     pub fn iter_all(
     ) -> impl Iterator<Item = (String, fn() -> (u64, Duration, (Endpoint, Endpoint)))> {
         vec![
@@ -364,6 +373,10 @@ pub mod samples {
             (
                 "Ultra High Speed LAN     ".to_string(),
                 ultra_high_speed_lan as fn() -> (u64, Duration, (Endpoint, Endpoint)),
+            ),
+            (
+                "Unconstrained            ".to_string(),
+                unconstrained as fn() -> (u64, Duration, (Endpoint, Endpoint)),
             ),
         ]
         .into_iter()
